@@ -53,4 +53,33 @@ Goal: get the repo, Expo project, and all external service accounts ready so Wee
 
 ## Review
 
-_To be filled in after completion._
+**Status:** Code scaffolding complete. External account tasks still pending on user.
+
+**What landed:**
+- Expo SDK 54 default template scaffolded in-place (Expo Router, TypeScript, React 19, RN 0.81)
+- Package renamed `axis-scaffold` → `axis`
+- [constants/theme.ts](constants/theme.ts) — rewritten with Axis palette (`AxisColors`), per-bot accents (`BotAccents`), and Fraunces/Inter font names. Kept `Colors` + `Fonts` exports that template components depend on; both `light` and `dark` point to dark values since the app is dark-only
+- [constants/bots.ts](constants/bots.ts) — metadata only (id, name, role, letter, color, temperature). Prompts intentionally NOT hardcoded — they live in the `bots` DB table per brief
+- [.env.example](.env.example) — all client + server vars from brief, including `EXPO_PUBLIC_SENTRY_DSN`
+- [.gitignore](.gitignore) — added `.env` + `!.env.example` so real secrets can't be committed
+- `@supabase/supabase-js@^2.104.0` installed via `npx expo install`
+- TypeScript compiles clean (`tsc --noEmit`)
+- Metro boots cleanly on localhost:8081 (verified via `npx expo start`)
+- First commit: `0477346` on branch `main`
+
+**Boilerplate left in place (to be replaced in Week 1):**
+- Template screens: `app/(tabs)/index.tsx`, `app/(tabs)/explore.tsx`, `app/modal.tsx`
+- Template components: `hello-wave`, `parallax-scroll-view`, `themed-text`, `themed-view`, `haptic-tab`, `external-link`, `ui/`
+- These are kept so boot verification passes; Week 1 will strip and replace with Home / Chat / You screens
+
+**Deferred (scope-creep per rule #6):**
+- Fraunces + Inter font TTFs not downloaded/wired yet — font names are configured in `theme.ts` but actual loading via `expo-font` waits until Week 1 when UI needs them
+- RevenueCat, PostHog, Sentry SDKs — not installed per Week 0 plan (those arrive in Weeks 6–7)
+
+**Known non-issue:**
+- `xcrun simctl` error on `expo start` — that's Xcode CLI tools not fully set up for iOS sim launching, unrelated to Metro. Won't affect dev on a configured Mac.
+
+**Next — blocking for Week 1:**
+1. User finishes "You do" checklist above (accounts, domain, GitHub remote)
+2. Once GitHub remote exists, push `main` to it
+3. Then start Week 1: strip template, build Home / Chat / You skeleton
