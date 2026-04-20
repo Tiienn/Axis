@@ -1,5 +1,3 @@
-import { Platform } from 'react-native';
-
 export const AxisColors = {
   background: '#0E0E10',
   surface: '#1A1815',
@@ -19,37 +17,9 @@ export const BotAccents = {
   rex: '#C2410C',
 };
 
-const dark = {
-  text: AxisColors.textPrimary,
-  background: AxisColors.background,
-  tint: AxisColors.primary,
-  icon: AxisColors.textSecondary,
-  tabIconDefault: AxisColors.textSecondary,
-  tabIconSelected: AxisColors.primary,
+export const FontFamily = {
+  serif: 'Fraunces_400Regular',
+  serifBold: 'Fraunces_600SemiBold',
+  sans: 'Inter_400Regular',
+  sansBold: 'Inter_600SemiBold',
 };
-
-export const Colors = {
-  light: dark,
-  dark,
-};
-
-export const Fonts = Platform.select({
-  ios: {
-    sans: 'Inter',
-    serif: 'Fraunces',
-    rounded: 'ui-rounded',
-    mono: 'ui-monospace',
-  },
-  default: {
-    sans: 'Inter',
-    serif: 'Fraunces',
-    rounded: 'normal',
-    mono: 'monospace',
-  },
-  web: {
-    sans: "Inter, system-ui, -apple-system, sans-serif",
-    serif: "Fraunces, Georgia, serif",
-    rounded: "'SF Pro Rounded', sans-serif",
-    mono: "SFMono-Regular, Menlo, Monaco, monospace",
-  },
-});

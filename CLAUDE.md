@@ -83,3 +83,86 @@ Goal: get the repo, Expo project, and all external service accounts ready so Wee
 1. User finishes "You do" checklist above (accounts, domain, GitHub remote)
 2. Once GitHub remote exists, push `main` to it
 3. Then start Week 1: strip template, build Home / Chat / You skeleton
+
+---
+
+# Week 1 Plan — UI Skeleton
+
+Goal: user opens app → sees Home with 4 bot cards → taps a bot → lands on Chat screen for that bot → can navigate back. Plus a You tab placeholder. Dark theme, Fraunces/Inter fonts wired. **No AI, no auth, no DB yet** — pure navigation skeleton with hardcoded bot data.
+
+## Tasks
+
+**Fonts:**
+- [ ] Install `@expo-google-fonts/fraunces` + `@expo-google-fonts/inter`
+- [ ] Load fonts in `app/_layout.tsx` with splash-screen gate so UI doesn't flash unstyled text
+
+**Strip template boilerplate (per Week 0 review, these have to go now):**
+- [ ] Delete `app/(tabs)/explore.tsx` (template's second tab)
+- [ ] Delete `app/modal.tsx` (template's modal example)
+- [ ] Delete unused components: `hello-wave.tsx`, `parallax-scroll-view.tsx`, `external-link.tsx`, `haptic-tab.tsx`, `components/ui/` (collapsible + icon-symbol)
+- [ ] Delete `scripts/reset-project.js` + its `npm run reset-project` script in package.json (it's a template helper that resets to blank — we don't need it)
+- [ ] Delete template assets: `partial-react-logo.png`, `react-logo*.png` (Axis icons come later)
+- [ ] Simplify `app/_layout.tsx` — dark-only, no `useColorScheme` toggle
+
+**Screens:**
+- [ ] Rewrite `app/(tabs)/_layout.tsx` — 2 tabs: Home, You (icons from `@expo/vector-icons`, Axis dark theme)
+- [ ] Rewrite `app/(tabs)/index.tsx` — Home: header "Your inner circle", scroll list of 4 bot cards (avatar + name + role), tapping routes to `/chat/[botId]`
+- [ ] Create `app/(tabs)/you.tsx` — placeholder card: "Free tier — 10 messages/day" + Settings link stub
+- [ ] Create `app/chat/[botId].tsx` — Chat screen stub: header with bot name, empty message list, text input at bottom (disabled placeholder, no send yet)
+
+**Components (new, minimal):**
+- [ ] `components/bot-avatar.tsx` — serif letter on colored circle, size prop
+- [ ] `components/bot-card.tsx` — Home row component (avatar + name + role)
+
+**Theme wiring:**
+- [ ] Update `components/themed-text.tsx` + `themed-view.tsx` to use `AxisColors` + `Fonts` (or delete if not needed)
+
+**Verify:**
+- [ ] `tsc --noEmit` passes
+- [ ] `npx expo start` boots clean
+- [ ] Manually confirm: Home → tap bot → Chat opens with right bot → back → You tab works
+
+**Commit + push.**
+
+## Out of scope for Week 1
+
+- Auth / onboarding (Week 2)
+- Any Supabase wiring (Week 2)
+- Sending messages / Claude integration (Week 3)
+- Persistence (Week 2)
+- Real splash/app icons (Week 9)
+
+## Review
+
+**Status:** UI skeleton done. Nav + theme + fonts all live. No AI/auth/DB wiring (on purpose).
+
+**Stripped:**
+- Template screens (`explore`, `modal`) and demo components (`hello-wave`, `parallax-scroll-view`, `external-link`, `haptic-tab`, `themed-text`, `themed-view`, `ui/`)
+- `hooks/` dir (was color-scheme toggle + theme-color — not needed, dark-only)
+- `scripts/reset-project.js` + `npm run reset-project` script in [package.json](package.json)
+- `assets/images/react-logo*.png` + `partial-react-logo.png`
+
+**Shipped:**
+- [constants/theme.ts](constants/theme.ts) — simplified to `AxisColors`, `BotAccents`, `FontFamily`. Dropped the template's `Colors`/`Fonts` exports since nothing imports them anymore
+- [components/bot-avatar.tsx](components/bot-avatar.tsx) — serif letter on colored circle, size prop
+- [components/bot-card.tsx](components/bot-card.tsx) — Home row (avatar + name + role + chevron)
+- [app/_layout.tsx](app/_layout.tsx) — root: loads Fraunces + Inter via `@expo-google-fonts/*`, splash-screen gate, custom `axisTheme` on React Navigation's DarkTheme, registers `(tabs)` and `chat/[botId]` stacks
+- [app/(tabs)/_layout.tsx](app/(tabs)/_layout.tsx) — 2 tabs (Home, You) with Ionicons, Axis colors
+- [app/(tabs)/index.tsx](app/(tabs)/index.tsx) — Home: "Axis" wordmark + "Your inner circle" tagline + 4 bot cards
+- [app/(tabs)/you.tsx](app/(tabs)/you.tsx) — You tab: free-tier usage card + stub list
+- [app/chat/[botId].tsx](app/chat/[botId].tsx) — Chat screen: header with BotAvatar + back button, empty state, disabled text input (enabled Week 3)
+
+**Deps added:** `@expo-google-fonts/fraunces@^0.4.1`, `@expo-google-fonts/inter@^0.4.2` (Regular + SemiBold weights only per simplicity rule)
+
+**Verified:**
+- `npx tsc --noEmit` → exit 0
+- `npx expo start` → Metro reaches "Waiting on http://localhost:8081" clean
+- Router types regenerated with `/chat/[botId]` route registered
+- Font package files `400Regular` + `600SemiBold` exist in both packages
+
+**Not yet tested (requires simulator/device):**
+- Visual rendering of screens
+- Navigation transitions (Home → Chat → back)
+- Font actually displaying in UI vs. fallback
+
+**Next — Week 2:** Supabase auth (email), DB schema + RLS, onboarding flow with 18+ age gate.
