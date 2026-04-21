@@ -1,12 +1,22 @@
 import { router } from 'expo-router';
+import { useEffect } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BotCard } from '@/components/bot-card';
 import { BOT_LIST } from '@/constants/bots';
 import { AxisColors, FontFamily } from '@/constants/theme';
+import { useSession } from '@/lib/auth';
 
 export default function Home() {
+  const { profile, loading } = useSession();
+
+  useEffect(() => {
+    if (!loading && profile && !profile.profile_json?.name) {
+      router.replace('/(auth)/onboarding');
+    }
+  }, [profile, loading]);
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <ScrollView contentContainerStyle={styles.scroll}>

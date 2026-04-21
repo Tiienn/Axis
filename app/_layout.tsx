@@ -5,13 +5,14 @@ import {
 } from '@expo-google-fonts/fraunces';
 import { Inter_400Regular, Inter_600SemiBold } from '@expo-google-fonts/inter';
 import { DarkTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack } from 'expo-router';
+import { Stack, router, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import 'react-native-reanimated';
 
 import { AxisColors } from '@/constants/theme';
+import { SessionProvider, useSession } from '@/lib/auth';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -31,6 +32,33 @@ export const unstable_settings = {
   anchor: '(tabs)',
 };
 
+function RouteGate() {
+  const { session, loading } = useSession();
+  const segments = useSegments();
+
+  useEffect(() => {
+    if (loading) return;
+    const group = segments[0];
+    const sub = segments[1];
+    const inAuth = group === '(auth)';
+    const onOnboarding = inAuth && sub === 'onboarding';
+
+    if (!session && !inAuth) {
+      router.replace('/(auth)/sign-in');
+    } else if (session && inAuth && !onOnboarding) {
+      router.replace('/(tabs)');
+    }
+  }, [session, loading, segments]);
+
+  return (
+    <Stack>
+      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+      <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+      <Stack.Screen name="chat/[botId]" options={{ headerShown: false }} />
+    </Stack>
+  );
+}
+
 export default function RootLayout() {
   const [loaded] = useFonts({
     Fraunces_400Regular,
@@ -46,12 +74,11 @@ export default function RootLayout() {
   if (!loaded) return null;
 
   return (
-    <ThemeProvider value={axisTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="chat/[botId]" options={{ headerShown: false }} />
-      </Stack>
-      <StatusBar style="light" />
-    </ThemeProvider>
+    <SessionProvider>
+      <ThemeProvider value={axisTheme}>
+        <RouteGate />
+        <StatusBar style="light" />
+      </ThemeProvider>
+    </SessionProvider>
   );
 }

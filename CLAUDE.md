@@ -166,3 +166,105 @@ Goal: user opens app → sees Home with 4 bot cards → taps a bot → lands on 
 - Font actually displaying in UI vs. fallback
 
 **Next — Week 2:** Supabase auth (email), DB schema + RLS, onboarding flow with 18+ age gate.
+
+---
+
+# Week 2 Plan — Auth + DB
+
+Goal: new user can open app → sign up with email + password + DOB (18+ hard-gated) → complete 4-question onboarding (name, what brings you here, current situation) → land on Home with a real session. Returning users sign in → Home. All data persisted to Supabase with RLS.
+
+**Prereq (external):** Supabase project created in Week 0 "You do" list. Need `.env` populated with `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY` to test live. Code can ship without them; it'll just fail on first auth call.
+
+## Tasks
+
+**Deps:**
+- [ ] Install `@react-native-async-storage/async-storage` (session persistence) + `react-native-url-polyfill` (fetch polyfill Supabase needs on RN)
+
+**Supabase client:**
+- [ ] `lib/supabase.ts` — client with AsyncStorage adapter, auto-refresh token, persist session
+
+**Schema — SQL migration (user pastes into Supabase SQL editor):**
+- [ ] `supabase/migrations/0001_init.sql` — all 6 tables per [AXIS.md:68](AXIS.md:68) (users, bots, conversations, messages, subscription_events, safety_events)
+- [ ] RLS on every table. Users see only their own rows; `bots` is public-read for authenticated users
+- [ ] Trigger: when a new auth.users row is created, insert matching row into public.users
+- [ ] Seed `bots` table with 4 rows — name, system_prompt (pasted from [bot-prompts.md](bot-prompts.md)), temperature, accent_color, prompt_version=1
+
+**Types:**
+- [ ] `lib/database.types.ts` — hand-written row types for our tables (skip supabase gen; over-engineered for MVP)
+
+**Session hook:**
+- [ ] `lib/auth.tsx` — `SessionProvider` + `useSession()` hook. Subscribes to `supabase.auth.onAuthStateChange`, exposes `session`, `profile`, `loading`
+
+**Auth + onboarding screens:**
+- [ ] `app/(auth)/_layout.tsx` — Stack for auth group
+- [ ] `app/(auth)/sign-in.tsx` — email + password + submit
+- [ ] `app/(auth)/sign-up.tsx` — email + password + DOB (text `YYYY-MM-DD`). Validate age ≥ 18 client-side and reject below. On success → onboarding
+- [ ] `app/(auth)/onboarding.tsx` — 3 screens in sequence (name → what brings you here → current situation). On finish, write all answers to `users.profile_json` and route to `/(tabs)`
+
+**Routing:**
+- [ ] Root `app/_layout.tsx` — wrap in `SessionProvider`; use session state to gate `(tabs)` vs `(auth)` via `router.replace` in effect
+- [ ] Home redirects to onboarding if `profile_json.name` missing (catches the "signed up, killed app mid-onboarding" edge case)
+
+**Verify:**
+- [ ] `tsc --noEmit` clean
+- [ ] Metro boots with no import errors
+- [ ] SQL reads correctly end-to-end (structurally — can't test live without Supabase creds)
+
+**Commit + push.**
+
+## Out of scope for Week 2
+
+- Apple / Google social sign-in (later polish; email is enough for MVP)
+- Magic link auth (needs deep linking config; password is simpler)
+- Password reset flow (can ship post-launch)
+- Profile avatar, display name edits, etc.
+- Supabase CLI / `supabase db push` automation — SQL files in repo, user runs them in Supabase SQL editor
+- Claude API / Edge Functions (Week 3)
+- Crisis/safety classifier (Week 5)
+
+## Review
+
+**Status:** Auth + DB complete. Real Supabase project live with all 6 tables, RLS, trigger, and 4 seeded bots. Every auth path wired end-to-end in code.
+
+**Shipped — client:**
+- Deps added via `npx expo install`: `@react-native-async-storage/async-storage`, `react-native-url-polyfill`
+- [lib/supabase.ts](lib/supabase.ts) — client with AsyncStorage adapter, `autoRefreshToken`, `persistSession`, `detectSessionInUrl: false` (RN has no URL session)
+- [lib/database.types.ts](lib/database.types.ts) — hand-written row types for 4 primary tables (users, bots, conversations, messages). Each table entry has `Row`, `Insert`, `Update`, `Relationships: []`. Schema also declares `Views` + `Functions` as empty records so supabase-js `GenericSchema` constraint resolves (without `Relationships`/`Views`/`Functions`, Update args narrow to `never`)
+- [lib/auth.tsx](lib/auth.tsx) — `SessionProvider` + `useSession()` hook exposing `{ session, profile, loading, refreshProfile }`. Subscribes to `supabase.auth.onAuthStateChange`; refetches `public.users` row on sign-in
+
+**Shipped — screens:**
+- [app/(auth)/_layout.tsx](app/(auth)/_layout.tsx) — Stack, headers off
+- [app/(auth)/sign-in.tsx](app/(auth)/sign-in.tsx) — email + password via `signInWithPassword`
+- [app/(auth)/sign-up.tsx](app/(auth)/sign-up.tsx) — email + password (8+ chars) + DOB `YYYY-MM-DD` with `ageAt()` helper rejecting <18 client-side. Routes to onboarding on success
+- [app/(auth)/onboarding.tsx](app/(auth)/onboarding.tsx) — 3 questions (name / goal / situation) in one scrollable form, writes to `users.profile_json` then `refreshProfile()` and routes to `/(tabs)`
+- [app/_layout.tsx](app/_layout.tsx) — wraps app in `SessionProvider`. `RouteGate` uses `useSegments()` + session state to redirect: no session → `/(auth)/sign-in`; session + in auth group (except onboarding) → `/(tabs)`
+- [app/(tabs)/index.tsx](app/(tabs)/index.tsx) — Home reads `useSession()`; redirects to onboarding if session exists but `profile.profile_json.name` missing (recovers from "signed up, killed app mid-onboarding")
+- [app/(tabs)/you.tsx](app/(tabs)/you.tsx) — added name + email display above free-tier card, plus Sign-out pressable calling `supabase.auth.signOut()` (makes auth flow testable without wiping data)
+
+**Shipped — DB:**
+- [supabase/migrations/0001_init.sql](supabase/migrations/0001_init.sql) — 6 tables (users, bots, conversations, messages, subscription_events, safety_events), `handle_new_user` trigger (auth.users insert -> public.users insert), RLS on all tables, bot seed with full v1 prompts (dollar-quoted `$H1$` / `$M1$` / `$Z1$` / `$R1$` to embed single quotes safely). Idempotent (`if not exists` + `on conflict do nothing` + `drop policy if exists`)
+- Migration applied live: `Success. No rows returned` in SQL editor. Verified `bots` table contains all 4 rows with correct temperatures (0.9/0.6/0.4/0.7) and accent colors
+- [.env](.env) populated with real `EXPO_PUBLIC_SUPABASE_URL` + `EXPO_PUBLIC_SUPABASE_ANON_KEY` (new-format `sb_publishable_...` key — supabase-js v2 treats it identically to the legacy anon JWT)
+
+**Gotchas handled:**
+- **Stale router types** (same as Week 1) — `.expo/types/router.d.ts` didn't know about `(auth)` routes; booted Metro briefly to regenerate, then stopped it
+- **`never` error in onboarding `.update()`** — supabase-js's `GenericSchema` constraint requires `Relationships`, `Views`, `Functions`. My initial shortcut types omitted them, so generic inference fell through to `never`. Fixed by adding `Relationships: []` per table + `Views: Record<string, never>` + `Functions: Record<string, never>`
+- **Unicode in migration SQL** — original prompts contained em dashes (U+2014), en dashes, an arrow. Monaco editor + Chrome clipboard round-trip mangled them to MacRoman artifacts (`,Äì` etc). Normalized the file to pure ASCII (`--`, `-`, `->`) with a one-time Python script. Prompts read identically
+
+**Verified:**
+- `npx tsc --noEmit` -> exit 0
+- Metro boots clean (`Waiting on http://localhost:8081`)
+- Schema + RLS + seed all present in Supabase (confirmed via Table Editor: 6 tables, 4 bots)
+
+**Not yet tested (needs simulator/device):**
+- Full sign-up -> onboarding -> home flow end-to-end
+- Sign-in for returning user
+- RLS behavior (only-own-rows) under real auth
+- `handle_new_user` trigger firing on signup
+
+**Deferred (per plan's out-of-scope):**
+- Apple / Google / magic link auth
+- Password reset
+- Profile editing
+
+**Next — Week 3:** Claude API wiring via Supabase Edge Function + streaming message UI.
