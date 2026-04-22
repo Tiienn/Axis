@@ -103,6 +103,12 @@ export default function Chat() {
     setSending(false);
     if (error || !data?.reply) {
       setMessages((m) => m.filter((x) => x.id !== optimisticUserId && x.id !== optimisticBotId));
+      const ctx = (error as { context?: Response } | null)?.context;
+      const body = ctx ? await ctx.clone().json().catch(() => null) : null;
+      if (body?.error === 'rate_limited') {
+        router.push('/paywall');
+        return;
+      }
       Alert.alert('Something went wrong', error?.message ?? 'Please try again.');
       setInput(text);
       return;

@@ -1,3 +1,5 @@
+import { useFocusEffect } from 'expo-router';
+import { useCallback, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -5,10 +7,42 @@ import { AxisColors, FontFamily } from '@/constants/theme';
 import { useSession } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
 
+const FREE_DAILY_LIMIT = 10;
+const RATE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 export default function You() {
   const { profile, session } = useSession();
   const name = profile?.profile_json?.name;
   const email = session?.user.email;
+  const status = profile?.subscription_status ?? 'free';
+  const isPaid = status !== 'free';
+  const [usedCount, setUsedCount] = useState<number | null>(null);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (isPaid) return;
+      let cancelled = false;
+      (async () => {
+        const since = new Date(Date.now() - RATE_WINDOW_MS).toISOString();
+        const res = await supabase
+          .from('messages')
+          .select('id', { count: 'exact', head: true })
+          .eq('role', 'user')
+          .gte('created_at', since);
+        if (!cancelled) setUsedCount(res.count ?? 0);
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [isPaid]),
+  );
+
+  const counterLabel = isPaid
+    ? 'Unlimited messages'
+    : usedCount === null
+      ? 'Loading…'
+      : `${Math.min(usedCount, FREE_DAILY_LIMIT)} / ${FREE_DAILY_LIMIT} messages today`;
+  const tierLabel = isPaid ? (status === 'lifetime' ? 'Lifetime' : 'Pro') : 'Free tier';
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -18,12 +52,12 @@ export default function You() {
         {email ? <Text style={styles.email}>{email}</Text> : null}
       </View>
       <View style={styles.card}>
-        <Text style={styles.cardLabel}>Free tier</Text>
-        <Text style={styles.cardValue}>10 / 10 messages today</Text>
+        <Text style={styles.cardLabel}>{tierLabel}</Text>
+        <Text style={styles.cardValue}>{counterLabel}</Text>
       </View>
       <View style={styles.stubs}>
         <Text style={styles.stub}>Settings · Subscription · Terms · Privacy</Text>
-        <Text style={styles.stubNote}>Wired up in Weeks 6–7.</Text>
+        <Text style={styles.stubNote}>Wired up in Week 7.</Text>
       </View>
       <Pressable onPress={() => supabase.auth.signOut()} style={styles.signOut}>
         <Text style={styles.signOutText}>Sign out</Text>

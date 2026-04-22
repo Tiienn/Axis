@@ -55,6 +55,7 @@ function RouteGate() {
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="(auth)" options={{ headerShown: false }} />
       <Stack.Screen name="chat/[botId]" options={{ headerShown: false }} />
+      <Stack.Screen name="paywall" options={{ presentation: 'modal', headerShown: false }} />
     </Stack>
   );
 }

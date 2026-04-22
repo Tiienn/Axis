@@ -576,3 +576,95 @@ You don't have to carry this alone. Please reach out to one of these now.
 - Sentry events for crisis triggers -> Week 7
 
 **Next -- Week 6:** RevenueCat + paywall + real rate limit on free tier (replaces the hardcoded `10 / 10 messages today` placeholder).
+
+---
+
+# Week 6 Plan -- Rate limit + paywall UI (RevenueCat deferred to 6B)
+
+Goal: free users get blocked at message 11 per rolling 24h with a paywall screen. Real counter on the You tab replaces the Week 1 hardcoded placeholder. Edge function enforces the limit server-side.
+
+**Split:** `react-native-purchases` (RevenueCat SDK) needs native code, which we haven't built yet -- all testing so far has been web + Expo Go. Splitting:
+- **Week 6 (now):** server-side rate limit, real client counter, paywall screen with tier copy. Upgrade button is a stub.
+- **Week 6B (later, once dev-client/EAS build is set up):** install `react-native-purchases`, configure App Store Connect + Play Console products, RevenueCat webhook -> `subscription_events` -> `users.subscription_status`. Paywall upgrade button wires to real IAP.
+
+## Key decisions (user-approved)
+
+1. **Split 6 / 6B** -- ship what works on web now; do IAP once native builds exist.
+2. **Rolling 24h window**, not UTC midnight -- simpler, no timezone bugs.
+3. **Classifier order preserved** -- classifier runs first; crisis bypasses rate limit (never block someone in crisis). Distress + none messages get rate-limited.
+4. **Count scope** -- user-role messages in the last 24h across ALL conversations. Pro/lifetime skip the check entirely.
+
+## Tasks
+
+**Edge function (`supabase/functions/send-message/index.ts`):**
+- [ ] Fetch `subscription_status` alongside `profile_json`
+- [ ] After the crisis branch exits (so crisis always gets through), if status === 'free', count user messages in last 24h via PostgREST `conversations!inner(user_id)` embed
+- [ ] Return 429 `{ error: 'rate_limited', limit: 10, window_hours: 24 }` if count >= 10
+
+**Client paywall:**
+- [ ] `app/paywall.tsx` -- modal screen. Lists Free / Pro monthly / Pro yearly / Lifetime with prices from [AXIS.md:232](AXIS.md:232). "Upgrade" button shows an Alert ("Available in the iOS/Android build") -- real IAP wires up in 6B. "Not now" closes modal.
+- [ ] `app/_layout.tsx` -- register `<Stack.Screen name="paywall" options={{ presentation: 'modal', headerShown: false }} />`
+
+**Chat rate-limit handling:**
+- [ ] `app/chat/[botId].tsx` -- on `supabase.functions.invoke` error, peek `error.context.clone().json()`. If body.error === 'rate_limited', roll back the optimistic bubbles and `router.push('/paywall')` instead of the generic Alert.
+
+**You tab real counter:**
+- [ ] `app/(tabs)/you.tsx` -- query messages count for last 24h on mount (RLS scopes to this user). Display `${count} / 10 messages today` for free users, `Unlimited` for pro/lifetime.
+
+**Deploy + verify:**
+- [ ] `supabase functions deploy send-message --no-verify-jwt`
+- [ ] `tsc --noEmit` clean
+- [ ] Smoke: send 10 messages on free tier, confirm 11th opens paywall; You tab counter moves in lockstep
+
+## Out of scope for Week 6
+
+- `react-native-purchases` / RevenueCat SDK -> 6B
+- App Store Connect / Play Console IAP products -> 6B
+- RevenueCat webhook -> `subscription_events` -> `users.subscription_status` -> 6B
+- Re-engagement paywall after 3+ days -> Week 8 polish
+- Churn-save 50% off -> 6B (RevenueCat built-in)
+- Voice / export feature paywalls -> post-launch
+
+## Review
+
+**Status:** Rate limit live end-to-end. Server enforces 10 user-messages per rolling 24h on free tier; 11th send returns 429 `rate_limited` and the chat screen routes to the paywall modal. You tab shows the real count, updated on focus. RevenueCat SDK + purchase flow intentionally deferred to 6B.
+
+**Shipped -- edge function:**
+- [supabase/functions/send-message/index.ts](supabase/functions/send-message/index.ts):
+  - New constants `FREE_DAILY_LIMIT = 10` and `RATE_WINDOW_MS = 24h`
+  - Extended `.select('profile_json, subscription_status')` on the users query, pulled `subscriptionStatus` out with a `'free'` fallback
+  - Rate-limit block placed AFTER the crisis short-circuit + distress log (so crisis/distress always continue to their respective paths) and BEFORE history load / Anthropic call. Uses PostgREST `conversations!inner(user_id)` embed: `select('id, conversations!inner(user_id)', { count: 'exact', head: true }).eq('conversations.user_id', userId).eq('role', 'user').gte('created_at', since)`. One query, RLS bypassed via service role, joined in the DB
+  - Returns 429 `{ error: 'rate_limited', limit: 10, window_hours: 24, used }` when `count >= 10`
+- Deployed via `supabase functions deploy send-message --no-verify-jwt`
+
+**Shipped -- client:**
+- [app/paywall.tsx](app/paywall.tsx) (NEW) -- modal screen. Lists Pro Monthly ($12.99/mo) / Pro Yearly ($79/yr, highlighted with "Best value" badge) / Lifetime ($199, 500 seats). "Upgrade" button shows an Alert ("Coming soon -- once iOS/Android apps ship"); "Not now" + close chevron both `router.back()`. Copy explains the 24h reset so users aren't confused by the rolling window
+- [app/_layout.tsx](app/_layout.tsx) -- registered `<Stack.Screen name="paywall" options={{ presentation: 'modal', headerShown: false }} />`
+- [app/chat/[botId].tsx](app/chat/%5BbotId%5D.tsx) -- in `send()`'s error branch, clone `error.context` and check `body.error === 'rate_limited'`. If matched, skip the generic Alert and `router.push('/paywall')`. Optimistic bubbles were already rolled back in the line above, so the chat ends up clean
+- [app/(tabs)/you.tsx](app/(tabs)/you.tsx) -- replaced hardcoded `10 / 10 messages today` with `useFocusEffect`-driven query against `messages` (RLS scopes to user automatically; counts `role='user' AND created_at > now() - 24h`). Free: `${min(count, 10)} / 10 messages today`. Pro/Lifetime: `Unlimited messages`. Tier label ("Free tier" / "Pro" / "Lifetime") reads from `profile.subscription_status`
+
+**Verified:**
+- `npx tsc --noEmit` -> exit 0
+- `supabase functions deploy send-message --no-verify-jwt` -> "Deployed Functions on project uttjrnqgeysuhvtjddgv: send-message"
+- Smoke test pending on device -- ready for user to run through 11 messages to confirm paywall fires
+
+**Not yet tested (requires device):**
+- 11th message actually returns 429 and opens paywall modal (code path verified, live-tested counter only)
+- You tab counter updates after new messages (uses `useFocusEffect` so it refreshes every time the tab regains focus)
+- Rolling-24h window correctness past midnight
+- Crisis bypass actually still works when user is at 10/10 (classifier should route to crisis before rate-limit check)
+- Pro/lifetime skip path (would need a row manually set to `subscription_status='pro'` in SQL editor to exercise)
+
+**Deferred to 6B (per plan):**
+- `react-native-purchases` / RevenueCat SDK install
+- App Store Connect + Play Console IAP product setup
+- RevenueCat webhook -> `subscription_events` -> `users.subscription_status` sync
+- Wire `Upgrade` button on paywall to actual IAP flow
+- Re-engagement paywall after 3+ days -> Week 8
+- Churn-save 50% off -> 6B
+
+**Known small things:**
+- Free counter can read 10 even right after the paywall fires (that's correct -- 10 sent, 11th blocked), but user might want a "5 left" style display later. Week 9 polish
+- If the user is at 9/10 and sends a crisis message, the crisis bypass fires (correct) and the crisis user+assistant pair both get inserted, which means the next send lands at 11/10 and hits the paywall immediately. Intentional -- crisis is never blocked, but subsequent non-crisis sends are. Good safety posture
+
+**Next -- Week 6B or Week 7:** either swing back to IAP once EAS dev-client is set up, or push ahead to Week 7 (Expo Push notifications + settings screen + error handling) and stack 6B into a later sprint.

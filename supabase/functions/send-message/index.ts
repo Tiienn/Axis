@@ -16,6 +16,8 @@ const SUMMARY_MAX_TOKENS = 300;
 const CLASSIFIER_MAX_TOKENS = 20;
 const HISTORY_LIMIT = 10;
 const SUMMARY_EVERY = 20; // 10 user + 10 assistant = 20 rows
+const FREE_DAILY_LIMIT = 10;
+const RATE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 const SUMMARY_SYSTEM =
   "Summarize what matters about this user -- what they're dealing with, what's been said, any personal details. Keep it under 200 words. No preamble.";
@@ -79,7 +81,7 @@ Deno.serve(async (req) => {
 
   const [botRes, profileRes, level] = await Promise.all([
     admin.from('bots').select('id, name, system_prompt, temperature').eq('id', botId).single(),
-    admin.from('users').select('profile_json').eq('id', userId).single(),
+    admin.from('users').select('profile_json, subscription_status').eq('id', userId).single(),
     classifyMessage(userMessage),
   ]);
   if (botRes.error || !botRes.data) return json(404, { error: 'bot not found' });
@@ -90,6 +92,7 @@ Deno.serve(async (req) => {
     goal?: string;
     situation?: string;
   };
+  const subscriptionStatus = profileRes.data.subscription_status ?? 'free';
 
   const convRes = await admin
     .from('conversations')
@@ -132,6 +135,25 @@ Deno.serve(async (req) => {
       event_type: 'distress',
       message_content: userMessage,
     });
+  }
+
+  if (subscriptionStatus === 'free') {
+    const since = new Date(Date.now() - RATE_WINDOW_MS).toISOString();
+    const rateRes = await admin
+      .from('messages')
+      .select('id, conversations!inner(user_id)', { count: 'exact', head: true })
+      .eq('conversations.user_id', userId)
+      .eq('role', 'user')
+      .gte('created_at', since);
+    const usedCount = rateRes.count ?? 0;
+    if (usedCount >= FREE_DAILY_LIMIT) {
+      return json(429, {
+        error: 'rate_limited',
+        limit: FREE_DAILY_LIMIT,
+        window_hours: 24,
+        used: usedCount,
+      });
+    }
   }
 
   const historyRes = await admin
