@@ -13,7 +13,7 @@ export const AxisColors = {
 export const BotAccents = {
   hitch: '#F59E0B',
   mira: '#C8847A',
-  zoe: '#B45309',
+  jean: '#B45309',
   rex: '#C2410C',
 };
 

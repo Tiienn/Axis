@@ -37,11 +37,12 @@ export default function You() {
     }, [isPaid]),
   );
 
+  const remaining = usedCount === null ? null : Math.max(0, FREE_DAILY_LIMIT - usedCount);
   const counterLabel = isPaid
     ? 'Unlimited messages'
-    : usedCount === null
+    : remaining === null
       ? 'Loading…'
-      : `${Math.min(usedCount, FREE_DAILY_LIMIT)} / ${FREE_DAILY_LIMIT} messages today`;
+      : `${remaining} of ${FREE_DAILY_LIMIT} messages left today`;
   const tierLabel = isPaid ? (status === 'lifetime' ? 'Lifetime' : 'Pro') : 'Free tier';
 
   return (

@@ -1,6 +1,6 @@
 import { BotAccents } from './theme';
 
-export type BotId = 'hitch' | 'mira' | 'zoe' | 'rex';
+export type BotId = 'hitch' | 'mira' | 'jean' | 'rex';
 
 export type Bot = {
   id: BotId;
@@ -28,12 +28,12 @@ export const BOTS: Record<BotId, Bot> = {
     color: BotAccents.mira,
     temperature: 0.6,
   },
-  zoe: {
-    id: 'zoe',
-    name: 'Zoe',
-    role: 'Intimacy educator',
-    letter: 'Z',
-    color: BotAccents.zoe,
+  jean: {
+    id: 'jean',
+    name: 'Jean',
+    role: 'Sex therapist',
+    letter: 'J',
+    color: BotAccents.jean,
     temperature: 0.4,
   },
   rex: {
@@ -46,4 +46,4 @@ export const BOTS: Record<BotId, Bot> = {
   },
 };
 
-export const BOT_LIST: Bot[] = [BOTS.hitch, BOTS.mira, BOTS.zoe, BOTS.rex];
+export const BOT_LIST: Bot[] = [BOTS.hitch, BOTS.mira, BOTS.jean, BOTS.rex];
