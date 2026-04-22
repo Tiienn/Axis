@@ -13,6 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AxisColors, FontFamily } from '@/constants/theme';
+import { track } from '@/lib/analytics';
 import { supabase } from '@/lib/supabase';
 
 export default function SignIn() {
@@ -26,7 +27,11 @@ export default function SignIn() {
     setLoading(true);
     const { error: err } = await supabase.auth.signInWithPassword({ email, password });
     setLoading(false);
-    if (err) setError(err.message);
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    track('sign_in');
   };
 
   const disabled = !email || !password || loading;

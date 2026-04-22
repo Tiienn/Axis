@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AxisColors, FontFamily } from '@/constants/theme';
+import { track } from '@/lib/analytics';
 import { supabase } from '@/lib/supabase';
 
 function formatDob(d: Date): string {
@@ -63,6 +64,7 @@ export default function SignUp() {
       setError(err.message);
       return;
     }
+    track('sign_up');
     if (!data.session) {
       setNeedsVerify(true);
       return;

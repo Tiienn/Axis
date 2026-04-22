@@ -1,9 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
+import { useEffect } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AxisColors, FontFamily } from '@/constants/theme';
+import { track } from '@/lib/analytics';
 
 const TIERS = [
   {
@@ -33,6 +35,11 @@ const TIERS = [
 ];
 
 export default function Paywall() {
+  const { trigger } = useLocalSearchParams<{ trigger?: string }>();
+  useEffect(() => {
+    track('paywall_shown', { trigger: trigger ?? 'manual' });
+  }, [trigger]);
+
   const onUpgrade = () => {
     Alert.alert(
       'Coming soon',

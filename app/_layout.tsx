@@ -12,7 +12,12 @@ import { useEffect } from 'react';
 import 'react-native-reanimated';
 
 import { AxisColors } from '@/constants/theme';
+import { initAnalytics } from '@/lib/analytics';
 import { SessionProvider, useSession } from '@/lib/auth';
+import { initSentry, Sentry } from '@/lib/sentry';
+
+initSentry();
+initAnalytics();
 
 SplashScreen.preventAutoHideAsync();
 
@@ -56,11 +61,20 @@ function RouteGate() {
       <Stack.Screen name="(auth)" options={{ headerShown: false }} />
       <Stack.Screen name="chat/[botId]" options={{ headerShown: false }} />
       <Stack.Screen name="paywall" options={{ presentation: 'modal', headerShown: false }} />
+      <Stack.Screen
+        name="settings"
+        options={{
+          title: 'Settings',
+          headerShown: true,
+          headerStyle: { backgroundColor: AxisColors.background },
+          headerTintColor: AxisColors.textPrimary,
+        }}
+      />
     </Stack>
   );
 }
 
-export default function RootLayout() {
+function RootLayout() {
   const [loaded] = useFonts({
     Fraunces_400Regular,
     Fraunces_600SemiBold,
@@ -83,3 +97,5 @@ export default function RootLayout() {
     </SessionProvider>
   );
 }
+
+export default Sentry.wrap(RootLayout);

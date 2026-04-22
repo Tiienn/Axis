@@ -18,6 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { BotAvatar } from '@/components/bot-avatar';
 import { BOTS, type BotId } from '@/constants/bots';
 import { AxisColors, FontFamily } from '@/constants/theme';
+import { track } from '@/lib/analytics';
 import { useSession } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
 
@@ -94,6 +95,7 @@ export default function Chat() {
     ]);
     setInput('');
     setSending(true);
+    track('message_sent', { bot_id: bot.id });
 
     const { data, error } = await supabase.functions.invoke<{ reply: string; messageId: string }>(
       'send-message',
@@ -106,7 +108,7 @@ export default function Chat() {
       const ctx = (error as { context?: Response } | null)?.context;
       const body = ctx ? await ctx.clone().json().catch(() => null) : null;
       if (body?.error === 'rate_limited') {
-        router.push('/paywall');
+        router.push({ pathname: '/paywall', params: { trigger: 'rate_limit' } });
         return;
       }
       Alert.alert('Something went wrong', error?.message ?? 'Please try again.');

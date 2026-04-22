@@ -7,6 +7,8 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.104.0';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY')!;
+const POSTHOG_API_KEY = Deno.env.get('POSTHOG_API_KEY');
+const POSTHOG_HOST = Deno.env.get('POSTHOG_HOST') ?? 'https://us.i.posthog.com';
 
 const MODEL = 'claude-sonnet-4-6';
 const SUMMARY_MODEL = 'claude-haiku-4-5-20251001';
@@ -51,6 +53,29 @@ function json(status: number, body: unknown) {
     status,
     headers: { 'content-type': 'application/json', ...CORS },
   });
+}
+
+// 1 retry, 1s wait, 5xx only. 4xx are caller bugs, not transient.
+async function fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
+  const res = await fetch(url, init);
+  if (res.ok || res.status < 500) return res;
+  await new Promise((r) => setTimeout(r, 1000));
+  return fetch(url, init);
+}
+
+// Fire-and-forget PostHog capture. No PII — distinct_id is auth UUID only.
+function capture(event: string, distinctId: string, properties: Record<string, unknown>) {
+  if (!POSTHOG_API_KEY) return;
+  fetch(`${POSTHOG_HOST}/capture/`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      api_key: POSTHOG_API_KEY,
+      event,
+      distinct_id: distinctId,
+      properties,
+    }),
+  }).catch((e) => console.error('posthog capture failed', e));
 }
 
 Deno.serve(async (req) => {
@@ -103,6 +128,8 @@ Deno.serve(async (req) => {
   const conversationId = convRes.data.id;
   const memorySummary = convRes.data.memory_summary ?? '';
 
+  capture('message_sent', userId, { bot_id: bot.id, classifier_level: level });
+
   if (level === 'crisis') {
     const crisisInsert = await admin
       .from('messages')
@@ -119,6 +146,8 @@ Deno.serve(async (req) => {
       event_type: 'crisis',
       message_content: userMessage,
     });
+
+    capture('crisis_triggered', userId, { bot_id: bot.id });
 
     const assistantRow = crisisInsert.data.find((m) => m.role === 'assistant');
     return json(200, {
@@ -179,7 +208,7 @@ Deno.serve(async (req) => {
   if (memorySummary) parts.push(`# What you remember about past conversations\n${memorySummary}`);
   const systemPrompt = parts.join('\n\n');
 
-  const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
+  const anthropicRes = await fetchWithRetry('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -262,7 +291,7 @@ async function updateMemorySummary(
     .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
     .join('\n\n');
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
+  const res = await fetchWithRetry('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -296,7 +325,7 @@ async function updateMemorySummary(
 
 async function classifyMessage(userMessage: string): Promise<'crisis' | 'distress' | 'none'> {
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const res = await fetchWithRetry('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'content-type': 'application/json',

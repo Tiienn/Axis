@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AxisColors, FontFamily } from '@/constants/theme';
+import { track } from '@/lib/analytics';
 import { useSession } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
 
@@ -78,6 +79,7 @@ export default function Onboarding() {
       setError(err.message);
       return;
     }
+    track('onboarding_completed');
     await refreshProfile();
     router.replace('/(tabs)');
   };

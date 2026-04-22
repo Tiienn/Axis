@@ -1,6 +1,7 @@
 import type { Session } from '@supabase/supabase-js';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 
+import { identify, resetAnalytics } from './analytics';
 import type { UserRow } from './database.types';
 import { supabase } from './supabase';
 
@@ -30,7 +31,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setProfile(null);
       return;
     }
-    setProfile(data as UserRow);
+    const row = data as UserRow;
+    setProfile(row);
+    identify(userId, { subscription_status: row.subscription_status ?? 'free' });
   };
 
   useEffect(() => {
@@ -49,6 +52,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         await loadProfile(newSession.user.id);
       } else {
         setProfile(null);
+        resetAnalytics();
       }
     });
     return () => {

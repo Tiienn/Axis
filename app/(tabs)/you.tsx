@@ -1,4 +1,5 @@
-import { useFocusEffect } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -56,12 +57,12 @@ export default function You() {
         <Text style={styles.cardLabel}>{tierLabel}</Text>
         <Text style={styles.cardValue}>{counterLabel}</Text>
       </View>
-      <View style={styles.stubs}>
-        <Text style={styles.stub}>Settings · Subscription · Terms · Privacy</Text>
-        <Text style={styles.stubNote}>Wired up in Week 7.</Text>
-      </View>
-      <Pressable onPress={() => supabase.auth.signOut()} style={styles.signOut}>
-        <Text style={styles.signOutText}>Sign out</Text>
+      <Pressable
+        onPress={() => router.push('/settings')}
+        style={({ pressed }) => [styles.settingsRow, pressed && styles.settingsRowPressed]}
+      >
+        <Text style={styles.settingsLabel}>Settings</Text>
+        <Ionicons name="chevron-forward" size={18} color={AxisColors.muted} />
       </Pressable>
     </SafeAreaView>
   );
@@ -100,19 +101,25 @@ const styles = StyleSheet.create({
     fontSize: 20,
     marginTop: 4,
   },
-  stubs: {
+  settingsRow: {
     marginTop: 24,
+    backgroundColor: AxisColors.surface,
+    borderColor: AxisColors.border,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
-  stub: {
-    color: AxisColors.textSecondary,
-    fontFamily: FontFamily.sans,
-    fontSize: 14,
+  settingsRowPressed: {
+    opacity: 0.7,
   },
-  stubNote: {
-    color: AxisColors.muted,
+  settingsLabel: {
+    color: AxisColors.textPrimary,
     fontFamily: FontFamily.sans,
-    fontSize: 12,
-    marginTop: 6,
+    fontSize: 15,
   },
   subtitle: {
     color: AxisColors.textSecondary,
@@ -125,14 +132,5 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.sans,
     fontSize: 12,
     marginTop: 2,
-  },
-  signOut: {
-    marginTop: 40,
-    alignSelf: 'flex-start',
-  },
-  signOutText: {
-    color: AxisColors.crisis,
-    fontFamily: FontFamily.sansBold,
-    fontSize: 14,
   },
 });
