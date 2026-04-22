@@ -404,3 +404,81 @@ Goal: open chat with Hitch → type a message → see Hitch reply in 2-5s. Full 
 - PostHog events -> Week 7
 
 **Next — Week 4:** Mira, Zoe, Rex live + memory summarization.
+
+---
+
+# Week 4 Plan — All 4 bots + memory summary
+
+Goal: Mira, Zoe, Rex open to live chats (not just Hitch). Every 10 turns, the edge function summarizes the conversation via Claude Haiku and stores it in `conversations.memory_summary`; subsequent replies prepend the summary to the system prompt so the bot "remembers" context beyond the 10-message window.
+
+## Key decisions
+
+1. **Unlock all 4 bots — one line.** `app/(tabs)/index.tsx` drops the `disabled={bot.id !== 'hitch'}` gate. Each bot has its own `system_prompt` + `temperature` in the DB; the edge function is already bot-agnostic.
+
+2. **Summary trigger: every 10 turns.** After persisting the user+assistant pair, count messages for the conversation; if count is a multiple of 20 (10 user + 10 assistant), summarize. First summary fires after turn 10.
+
+3. **Strategy: regenerate from all messages, not merge.** Simpler. Triggers every 10 turns so cost is bounded; Haiku is cheap. Switch to merge if cost becomes an issue.
+
+4. **Model: `claude-haiku-4-5-20251001`**, `max_tokens=300`, small system prompt ("Summarize what matters about this user — what they're dealing with, what's been said, any personal details. Keep it under 200 words. No preamble.").
+
+5. **Latency: synchronous.** Adds ~1s to every 10th turn. Simpler than async/waitUntil. Revisit if noticeable.
+
+6. **System prompt format:**
+   ```
+   {bot.system_prompt}
+
+   # About the user
+   {profile_line}   <- only if present
+
+   # What you remember about past conversations
+   {memory_summary} <- only if non-empty
+   ```
+
+7. **No SSE streaming.** Web felt fine at 2-4s. Revisit in Week 8.
+
+## Tasks
+
+- [ ] `app/(tabs)/index.tsx` -- drop Hitch-only gate
+- [ ] `supabase/functions/send-message/index.ts` -- (a) load `conversations.memory_summary` along with bot/profile, (b) prepend to system prompt when non-empty, (c) after message insert, if count % 20 === 0, call Haiku and update summary
+- [ ] Redeploy: `supabase functions deploy send-message --no-verify-jwt`
+- [ ] Verify: `tsc --noEmit` clean; smoke-test Mira live; force 10 turns with Hitch, confirm `memory_summary` populates
+
+## Out of scope for Week 4
+
+- SSE streaming -> Week 8
+- Incremental/merge summary -> optimization
+- Per-bot summary prompts -> use one generic
+- Safety classifier -> Week 5
+- Rate limits -> Week 6
+
+## Review
+
+**Status:** All 4 bots live. Memory summarizer verified on live data -- Mira conversation hit the 20-message trigger, Haiku 4.5 regenerated a 1170-char summary, `conversations.memory_summary` populated, subsequent sends prepend it to the system prompt. Hitch/Zoe/Rex opened to live chat (each with one turn so far, correctly below the summary threshold).
+
+**Shipped:**
+- [app/(tabs)/index.tsx](app/(tabs)/index.tsx) -- removed `disabled={bot.id !== 'hitch'}`. One-line flip; all 4 cards route to `/chat/[botId]` now
+- [supabase/functions/send-message/index.ts](supabase/functions/send-message/index.ts) -- three adds:
+  1. Conversation upsert `.select('id, memory_summary')` returns the existing summary
+  2. System prompt now assembled from `[bot.system_prompt, "# About the user\n...", "# What you remember about past conversations\n..."].join('\n\n')` -- only the blocks with content are joined
+  3. After inserting the user+assistant pair, `count: 'exact'` head query on `messages`; if total is a multiple of `SUMMARY_EVERY` (20), fires `updateMemorySummary()` which pulls the full transcript, calls `SUMMARY_MODEL` (`claude-haiku-4-5-20251001`, `max_tokens=300`, `system=SUMMARY_SYSTEM`), and upserts the result to `conversations.memory_summary`. Wrapped in try/catch so a summary failure never breaks the reply path.
+
+**Deploy:**
+- `supabase functions deploy send-message --no-verify-jwt` -- same flags as Week 3
+
+**Verified (live, via Supabase SQL editor):**
+- `select b.name, length(c.memory_summary), (select count(*) from messages where conversation_id = c.id) as msgs from conversations c join bots b on b.id = c.bot_id order by msgs desc;` returned Mira/24/1170 and the three others at 2/0
+- Summary text begins "Emotionally, Tien insists he's 'positive' and 'stress-free,' but the..." -- real synthesis, references the user by their onboarding-entered name, draws content from the conversation rather than echoing the prompt
+- `npx tsc --noEmit` -> exit 0
+
+**Not yet tested:**
+- Summary regen on the *second* trigger (40 messages) -- we've confirmed it fires once but not that it keeps refreshing
+- Bot behavior change after summary lands -- would need 15+ more turns to see if Mira's next reply referenced the summarized history
+- iOS simulator / Android (same native-path gap as Week 3)
+
+**Deferred (per plan's out-of-scope):**
+- Streaming -> Week 8
+- Incremental/merge summary -> optimization when cost becomes a concern (Haiku at ~1170-char regen every 10 turns is trivial right now)
+- Per-bot summary prompts
+- Safety classifier / crisis response -> Week 5
+
+**Next -- Week 5:** safety classifier (Haiku gate on user messages) + canned crisis response + `safety_events` logging.

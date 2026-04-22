@@ -9,8 +9,14 @@ const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY')!;
 
 const MODEL = 'claude-sonnet-4-6';
+const SUMMARY_MODEL = 'claude-haiku-4-5-20251001';
 const MAX_TOKENS = 512;
+const SUMMARY_MAX_TOKENS = 300;
 const HISTORY_LIMIT = 10;
+const SUMMARY_EVERY = 20; // 10 user + 10 assistant = 20 rows
+
+const SUMMARY_SYSTEM =
+  "Summarize what matters about this user -- what they're dealing with, what's been said, any personal details. Keep it under 200 words. No preamble.";
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -70,10 +76,11 @@ Deno.serve(async (req) => {
   const convRes = await admin
     .from('conversations')
     .upsert({ user_id: userId, bot_id: bot.id }, { onConflict: 'user_id,bot_id' })
-    .select('id')
+    .select('id, memory_summary')
     .single();
   if (convRes.error || !convRes.data) return json(500, { error: 'conversation upsert failed' });
   const conversationId = convRes.data.id;
+  const memorySummary = convRes.data.memory_summary ?? '';
 
   const historyRes = await admin
     .from('messages')
@@ -93,9 +100,10 @@ Deno.serve(async (req) => {
   ]
     .filter(Boolean)
     .join('\n');
-  const systemPrompt = profileLine
-    ? `${bot.system_prompt}\n\n# About the user\n${profileLine}`
-    : bot.system_prompt;
+  const parts = [bot.system_prompt];
+  if (profileLine) parts.push(`# About the user\n${profileLine}`);
+  if (memorySummary) parts.push(`# What you remember about past conversations\n${memorySummary}`);
+  const systemPrompt = parts.join('\n\n');
 
   const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -144,9 +152,70 @@ Deno.serve(async (req) => {
   if (insertRes.error) return json(500, { error: 'message save failed' });
 
   const assistantRow = insertRes.data.find((m) => m.role === 'assistant');
+
+  const countRes = await admin
+    .from('messages')
+    .select('id', { count: 'exact', head: true })
+    .eq('conversation_id', conversationId);
+  const totalMessages = countRes.count ?? 0;
+  if (totalMessages > 0 && totalMessages % SUMMARY_EVERY === 0) {
+    try {
+      await updateMemorySummary(admin, conversationId);
+    } catch (e) {
+      console.error('summary update failed', e);
+    }
+  }
+
   return json(200, {
     reply,
     messageId: assistantRow?.id,
     createdAt: assistantRow?.created_at,
   });
 });
+
+async function updateMemorySummary(
+  admin: ReturnType<typeof createClient>,
+  conversationId: string,
+) {
+  const { data, error } = await admin
+    .from('messages')
+    .select('role, content')
+    .eq('conversation_id', conversationId)
+    .order('created_at', { ascending: true });
+  if (error || !data) return;
+
+  const transcript = data
+    .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+    .join('\n\n');
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: SUMMARY_MODEL,
+      max_tokens: SUMMARY_MAX_TOKENS,
+      system: SUMMARY_SYSTEM,
+      messages: [{ role: 'user', content: transcript }],
+    }),
+  });
+  if (!res.ok) {
+    console.error('summary anthropic error', res.status, await res.text());
+    return;
+  }
+  const body = await res.json();
+  const summary: string = (body.content ?? [])
+    .filter((c: { type: string }) => c.type === 'text')
+    .map((c: { text: string }) => c.text)
+    .join('')
+    .trim();
+  if (!summary) return;
+
+  await admin
+    .from('conversations')
+    .update({ memory_summary: summary })
+    .eq('id', conversationId);
+}

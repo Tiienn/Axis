@@ -29,7 +29,6 @@ export default function Home() {
             <BotCard
               key={bot.id}
               bot={bot}
-              disabled={bot.id !== 'hitch'}
               onPress={() => router.push(`/chat/${bot.id}`)}
             />
           ))}
