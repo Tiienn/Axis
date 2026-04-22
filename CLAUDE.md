@@ -268,3 +268,139 @@ Goal: new user can open app → sign up with email + password + DOB (18+ hard-ga
 - Profile editing
 
 **Next — Week 3:** Claude API wiring via Supabase Edge Function + streaming message UI.
+
+---
+
+# Week 3 Plan — AI Loop (Hitch only)
+
+Goal: open chat with Hitch → type a message → see Hitch reply in 2-5s. Full context (bot prompt + user profile + last 10 messages) assembled server-side, Claude API key stays server-side, messages persist to DB. Mira/Zoe/Rex coming in Week 4; safety classifier in Week 5.
+
+**Prereqs (external):**
+- `ANTHROPIC_API_KEY` in Supabase Edge Function secrets (user sets this — I can do it via Chrome)
+- Supabase CLI installed locally (`brew install supabase/tap/supabase`) — needed to deploy the function
+
+## Key decisions (flag anything you want different)
+
+**1. Non-streaming first, not SSE.** Hitch's replies are 2-5 sentences (per his system prompt). A "…" typing indicator for 2-3s while the full reply loads is acceptable UX and MUCH simpler than SSE over fetch on RN. Brief mentions streaming but this is the simpler V1 per CLAUDE rule #6. Add streaming in Week 4 if it feels slow.
+
+**2. Hitch-only gate in UI.** All 4 bots are seeded but only Hitch opens to a live chat. Mira/Zoe/Rex cards show a "coming soon" badge. Keeps Week 3 risk tight and reserves Mira/Zoe rails for the Week 5 safety sprint.
+
+**3. Model: `claude-sonnet-4-6`.** Latest Sonnet (brief said Sonnet 4.5, 4.6 is current). Temperature read from `bots.temperature`.
+
+**4. No rate limits yet.** Free-tier 10/day is Week 6 (paywalls). For Week 3, unlimited. Mitigate by watching Anthropic dashboard.
+
+**5. No safety classifier yet.** Week 5. Week 3 trusts Hitch's system-prompt rails.
+
+## Tasks
+
+**Edge Function (`supabase/functions/send-message/index.ts`, Deno):**
+- [ ] Validate auth: read `Authorization: Bearer <jwt>`, call `supabase.auth.getUser(jwt)` — reject if no user
+- [ ] Parse body: `{ botId: string, userMessage: string }`
+- [ ] Load `bots` row by id (system_prompt, temperature)
+- [ ] Load `users` row (profile_json) for name/goal/situation context
+- [ ] Upsert `conversations` row for (user_id, bot_id); get conversation_id
+- [ ] Load last 10 `messages` for this conversation, ordered ascending
+- [ ] Assemble Claude request: system = bot.system_prompt + small profile block; messages = [history, new user msg]
+- [ ] POST to `https://api.anthropic.com/v1/messages` with service key env var, model `claude-sonnet-4-6`, max_tokens=512, temperature=bot.temperature
+- [ ] Save both the user message and the assistant reply to `messages` table (use service role key so writes bypass RLS cleanly; the auth check above is the gate)
+- [ ] Return `{ reply: string, messageId: string }`
+- [ ] Basic error handling: 401 no auth, 400 bad body, 502 upstream failure. No retries in v1.
+
+**Client (`app/chat/[botId].tsx` rewrite):**
+- [ ] On mount, fetch existing messages from Supabase (RLS-scoped via user JWT)
+- [ ] Render as message bubbles (user right-aligned, assistant left-aligned with BotAvatar). Serif font for bot, sans for user (per brief)
+- [ ] Enable TextInput + send button
+- [ ] On send: optimistic-append user message, show "…" placeholder bubble, POST to edge function via `supabase.functions.invoke('send-message', { body })`, replace placeholder with real reply
+- [ ] Scroll to bottom on new message; KeyboardAvoidingView so input isn't covered
+- [ ] Error state: if function errors, remove the optimistic user message and show a toast (simple RN Alert is fine)
+
+**Home — gate non-Hitch bots:**
+- [ ] `components/bot-card.tsx` — accept a `disabled` prop; when disabled, lower opacity + "Soon" badge + no-op press
+- [ ] `app/(tabs)/index.tsx` — pass `disabled={bot.id !== 'hitch'}` for non-Hitch cards
+
+**Deploy:**
+- [ ] Install Supabase CLI (`brew install supabase/tap/supabase`)
+- [ ] `supabase login` (browser flow)
+- [ ] `supabase link --project-ref uttjrnqgeysuhvtjddgv`
+- [ ] `supabase secrets set ANTHROPIC_API_KEY=<key>` (I'll drive this via Chrome if you prefer pasting the key into the dashboard instead)
+- [ ] `supabase functions deploy send-message --no-verify-jwt=false`
+- [ ] Smoke test: curl the function with a valid JWT from the app
+
+**Verify:**
+- [ ] `tsc --noEmit` clean
+- [ ] Deno lint/check clean on the function file
+- [ ] End-to-end: log into the app on simulator, tap Hitch, send "yo", get a reply. Confirm both messages present in the `messages` table via Supabase dashboard.
+
+**Commit + push.**
+
+## Out of scope for Week 3
+
+- Mira, Zoe, Rex live chats (Week 4)
+- Streaming / SSE (evaluate Week 4)
+- Safety classifier, crisis response (Week 5)
+- Memory summary (`memory_summary`) and the every-10-messages Haiku summarizer (Week 4)
+- Rate limits, free-tier 10/day gate (Week 6)
+- Retry / exponential backoff on Anthropic 5xx (Week 8 polish)
+- PostHog events for send/receive (Week 7)
+
+## Review
+
+**Status:** Hitch live chat end-to-end green on web. Edge function live on Supabase at `uttjrnqgeysuhvtjddgv`. Send "Hi" in the chat -> real Hitch reply renders in ~2-4s. Still needs a simulator/device pass for iOS + Android.
+
+**Shipped — edge function:**
+- [supabase/functions/send-message/index.ts](supabase/functions/send-message/index.ts) — Deno edge function, ~150 lines. Flow: validate Bearer JWT via `admin.auth.getUser(jwt)` -> parse `{botId, userMessage}` -> parallel load of `bots` + `users.profile_json` -> upsert `conversations` (`onConflict: 'user_id,bot_id'`) -> load last 10 messages (desc + reverse to asc) -> assemble system prompt (`bot.system_prompt` + optional `# About the user` block from profile) -> POST to Anthropic `v1/messages` (model `claude-sonnet-4-6`, `max_tokens=512`, `temperature=bot.temperature`, `anthropic-version: 2023-06-01`) -> insert both user + assistant rows -> return `{reply, messageId, createdAt}`
+- Service role key used for DB writes; JWT check is the gate, so RLS is bypassed cleanly inside the function
+- Error codes per plan: 401 missing/invalid JWT, 400 bad body / missing fields, 404 bot/profile not found, 500 DB write failures, 502 Anthropic failure or empty reply
+- CORS: `*` for POST + OPTIONS. Fine for dev; tighten to the app's origin in Week 9 polish
+
+**Shipped — client:**
+- [app/chat/[botId].tsx](app/chat/%5BbotId%5D.tsx) — full rewrite from Week 1 stub. `loadHistory` queries bots->conversations->messages on mount. `send()` optimistically appends user + "…" pending assistant bubble, invokes edge function via `supabase.functions.invoke()` (auto-injects Bearer JWT), replaces pending bubble with real reply or rolls back on error. FlatList with role-styled bubbles (user: amber/sans/right; bot: surface/serif/left + BotAvatar). KeyboardAvoidingView handles iOS keyboard
+- [components/bot-card.tsx](components/bot-card.tsx) — added `disabled?: boolean`. Disabled: opacity 0.55, "Soon" badge instead of chevron, no-op press
+- [app/(tabs)/index.tsx](app/(tabs)/index.tsx) — one line: `disabled={bot.id !== 'hitch'}`
+- [tsconfig.json](tsconfig.json) — added `"exclude": ["node_modules", "supabase/functions"]` so TSC doesn't try to resolve Deno imports / `Deno` global
+
+**Deploy:**
+- Installed Supabase CLI 2.90.0 via `brew install supabase/tap/supabase`
+- `supabase login` (user ran in their own terminal; `--no-browser` flag needed a TTY so couldn't automate)
+- `supabase link --project-ref uttjrnqgeysuhvtjddgv` -> "Finished supabase link."
+- `ANTHROPIC_API_KEY` pasted into Supabase Edge Function Secrets dashboard by user (Claude safety rules prohibit entering API keys into forms)
+- `supabase functions deploy send-message` -> "Deployed Functions on project uttjrnqgeysuhvtjddgv: send-message". (Docker-not-running warning is harmless; CLI uploads the asset directly)
+
+**Gotchas handled:**
+- **TSC failures on Deno code** — initial `tsc --noEmit` threw 8 errors (`Deno` undefined, can't resolve `https://esm.sh/...`, implicit-any on filter/map callbacks). Deno has its own type system that Node's TSC doesn't understand. Fix: `tsconfig.json` `exclude: [...,"supabase/functions"]`. Clean after
+- **Chrome extension flakes driving the Supabase dashboard** — triple_click + screenshot bounced with "Detached while handling command" / "chrome-extension URL" errors on the Secrets page. Worked around by navigating away and back to reset, then handing control to user to paste the secret
+- **anthropic.com blocked in Claude-in-Chrome** — couldn't open the Anthropic console tab to grab the key. Gave user plain-text instructions (console.anthropic.com/settings/keys -> add billing -> create key -> paste in Supabase) instead of auto-driving
+
+**Verified:**
+- `npx tsc --noEmit` -> exit 0
+- Function deployed successfully (CLI output confirms)
+- **End-to-end live on web (localhost:8081)**: sign in -> Home -> Hitch -> send "Hi" -> real Hitch reply renders. Confirmed against a real Anthropic call with the full system prompt + profile block
+
+**Post-deploy bugs hit + fixed (during Week 3 smoke test):**
+
+1. **SSR crash on `npx expo start` for web** -- `ReferenceError: window is not defined` thrown from `@react-native-async-storage/async-storage/src/AsyncStorage.js:63`, which unconditionally touches `window.localStorage` at module import time. Metro evaluates every import during SSR, so even wrapping the storage reference with a `typeof window` check at usage didn't help -- the import itself crashed. Fixed by splitting the Supabase storage config into platform-specific files so Metro never bundles AsyncStorage into the web build:
+   - [lib/supabase-storage.ts](lib/supabase-storage.ts) (default/native): exports `authStorage = AsyncStorage`, `persistSession = true`, `autoRefreshToken = true`
+   - [lib/supabase-storage.web.ts](lib/supabase-storage.web.ts): exports `authStorage = undefined`, gates persist/refresh on `typeof window !== 'undefined'`
+   - [lib/supabase.ts](lib/supabase.ts) imports from `./supabase-storage`; Metro picks `.web.ts` for web and the default for native
+
+2. **401 `UNAUTHORIZED_UNSUPPORTED_TOKEN_ALGORITHM` on every send** -- the Supabase project was created after the platform switched to asymmetric JWT signing keys, so `auth.getSession()` returns an **ES256**-signed JWT. The Edge Functions **gateway** still only recognizes HS256 and pre-rejects with that exact code before the function runs. Our function already does its own `admin.auth.getUser(jwt)` check (line 43), and the full supabase-js SDK handles ES256 fine. Fixed by redeploying with `supabase functions deploy send-message --no-verify-jwt` so the gateway skips its own check and lets the in-function verifier be the gate. (Alternative would've been flipping the project back to legacy HS256 keys in the dashboard, but that's a deprecated path.)
+
+**Debugging trail** (kept here so future me doesn't re-walk it): temporary `console.log('[chat] pre-send session ...')` + `console.log('[chat] 401 response body ...')` + a `window.alert` on web surfaced both bugs. Logs stripped after green path confirmed. Key insight: `FunctionsHttpError`'s `.context` is a real `Response` -- `.clone().text()` reveals the gateway's raw error body, which is the only place the `UNAUTHORIZED_UNSUPPORTED_TOKEN_ALGORITHM` code appears.
+
+**Not yet tested (web path green; native still pending):**
+- iOS simulator + Android emulator send -> reply round trip
+- Hitch staying in character across 5+ turns
+- History ordering (last 10 in asc order) once a conversation exceeds 10 messages
+- Error path: kill internet, send, confirm rollback + Alert
+- Mira/Zoe/Rex cards show "Soon" badge and don't open (verified in code, not live UI)
+
+**Deferred (per plan's out-of-scope):**
+- Mira, Zoe, Rex live chats -> Week 4
+- Streaming / SSE -> evaluate Week 4 if replies feel slow
+- Safety classifier / crisis response -> Week 5
+- `memory_summary` + every-10-messages Haiku summarizer -> Week 4
+- Rate limits / free-tier 10/day -> Week 6
+- Retries / exponential backoff on Anthropic 5xx -> Week 8
+- PostHog events -> Week 7
+
+**Next — Week 4:** Mira, Zoe, Rex live + memory summarization.

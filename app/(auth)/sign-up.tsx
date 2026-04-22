@@ -1,5 +1,6 @@
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { Link, router } from 'expo-router';
-import { useState } from 'react';
+import { createElement, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -15,33 +16,38 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { AxisColors, FontFamily } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';
 
-const DOB_RE = /^\d{4}-\d{2}-\d{2}$/;
+function formatDob(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
-function ageAt(dobIso: string, now = new Date()): number | null {
-  if (!DOB_RE.test(dobIso)) return null;
-  const d = new Date(dobIso + 'T00:00:00Z');
-  if (Number.isNaN(d.getTime())) return null;
-  let age = now.getUTCFullYear() - d.getUTCFullYear();
-  const m = now.getUTCMonth() - d.getUTCMonth();
-  if (m < 0 || (m === 0 && now.getUTCDate() < d.getUTCDate())) age -= 1;
+function ageAt(d: Date, now = new Date()): number {
+  let age = now.getFullYear() - d.getFullYear();
+  const m = now.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < d.getDate())) age -= 1;
   return age;
 }
+
+const DEFAULT_DOB = new Date(2000, 0, 1);
 
 export default function SignUp() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [dob, setDob] = useState('');
+  const [dob, setDob] = useState<Date | null>(null);
+  const [showPicker, setShowPicker] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [needsVerify, setNeedsVerify] = useState(false);
 
   const submit = async () => {
     setError(null);
-    const age = ageAt(dob);
-    if (age === null) {
-      setError('Enter date of birth as YYYY-MM-DD.');
+    if (!dob) {
+      setError('Please pick your date of birth.');
       return;
     }
-    if (age < 18) {
+    if (ageAt(dob) < 18) {
       setError('You must be 18 or older to use Axis.');
       return;
     }
@@ -51,16 +57,43 @@ export default function SignUp() {
     }
 
     setLoading(true);
-    const { error: err } = await supabase.auth.signUp({ email, password });
+    const { data, error: err } = await supabase.auth.signUp({ email, password });
     setLoading(false);
     if (err) {
       setError(err.message);
+      return;
+    }
+    if (!data.session) {
+      setNeedsVerify(true);
       return;
     }
     router.replace('/(auth)/onboarding');
   };
 
   const disabled = !email || !password || !dob || loading;
+
+  if (needsVerify) {
+    return (
+      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+        <View style={styles.inner}>
+          <Text style={styles.wordmark}>Axis</Text>
+          <Text style={styles.heading}>Check your email</Text>
+          <Text style={styles.verifyBody}>
+            We sent a confirmation link to <Text style={styles.verifyEmail}>{email}</Text>. Tap it,
+            then come back and sign in.
+          </Text>
+          <Pressable
+            onPress={() => router.replace('/(auth)/sign-in')}
+            style={styles.button}
+          >
+            <Text style={styles.buttonText}>Go to sign in</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const dobLabel = dob ? formatDob(dob) : 'Date of birth';
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -91,14 +124,64 @@ export default function SignUp() {
             value={password}
             onChangeText={setPassword}
           />
-          <TextInput
-            style={styles.input}
-            placeholder="Date of birth (YYYY-MM-DD)"
-            placeholderTextColor={AxisColors.muted}
-            autoCapitalize="none"
-            value={dob}
-            onChangeText={setDob}
-          />
+
+          {Platform.OS === 'web' ? (
+            createElement('input', {
+              type: 'date',
+              value: dob ? formatDob(dob) : '',
+              max: formatDob(new Date()),
+              onChange: (e: { target: { value: string } }) => {
+                const v = e.target.value;
+                if (!v) {
+                  setDob(null);
+                  return;
+                }
+                const d = new Date(`${v}T00:00:00`);
+                if (!Number.isNaN(d.getTime())) setDob(d);
+              },
+              style: {
+                backgroundColor: AxisColors.surface,
+                border: `1px solid ${AxisColors.border}`,
+                borderRadius: 10,
+                padding: 14,
+                color: AxisColors.textPrimary,
+                fontFamily: `${FontFamily.sans}, -apple-system, sans-serif`,
+                fontSize: 15,
+                outline: 'none',
+                colorScheme: 'dark',
+              },
+            })
+          ) : (
+            <>
+              <Pressable onPress={() => setShowPicker(true)} style={styles.input}>
+                <Text
+                  style={[
+                    styles.pickerText,
+                    !dob && { color: AxisColors.muted },
+                  ]}
+                >
+                  {dobLabel}
+                </Text>
+              </Pressable>
+              {showPicker && (
+                <DateTimePicker
+                  value={dob ?? DEFAULT_DOB}
+                  mode="date"
+                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                  maximumDate={new Date()}
+                  onChange={(_, picked) => {
+                    if (Platform.OS !== 'ios') setShowPicker(false);
+                    if (picked) setDob(picked);
+                  }}
+                />
+              )}
+              {Platform.OS === 'ios' && showPicker && (
+                <Pressable onPress={() => setShowPicker(false)} style={styles.pickerDone}>
+                  <Text style={styles.pickerDoneText}>Done</Text>
+                </Pressable>
+              )}
+            </>
+          )}
           <Text style={styles.hint}>Axis is 18+. We check once at signup.</Text>
 
           {error && <Text style={styles.error}>{error}</Text>}
@@ -148,6 +231,22 @@ const styles = StyleSheet.create({
     color: AxisColors.textPrimary,
     fontFamily: FontFamily.sans,
     fontSize: 15,
+    justifyContent: 'center',
+  },
+  pickerText: {
+    color: AxisColors.textPrimary,
+    fontFamily: FontFamily.sans,
+    fontSize: 15,
+  },
+  pickerDone: {
+    alignSelf: 'flex-end',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  pickerDoneText: {
+    color: AxisColors.primary,
+    fontFamily: FontFamily.sansBold,
+    fontSize: 14,
   },
   hint: {
     color: AxisColors.muted,
@@ -176,4 +275,15 @@ const styles = StyleSheet.create({
   footer: { flexDirection: 'row', justifyContent: 'center', marginTop: 24 },
   footerText: { color: AxisColors.textSecondary, fontFamily: FontFamily.sans, fontSize: 14 },
   link: { color: AxisColors.primary, fontFamily: FontFamily.sansBold, fontSize: 14 },
+  verifyBody: {
+    color: AxisColors.textSecondary,
+    fontFamily: FontFamily.sans,
+    fontSize: 15,
+    lineHeight: 22,
+    marginBottom: 24,
+  },
+  verifyEmail: {
+    color: AxisColors.textPrimary,
+    fontFamily: FontFamily.sansBold,
+  },
 });

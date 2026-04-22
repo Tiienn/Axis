@@ -17,25 +17,59 @@ import { AxisColors, FontFamily } from '@/constants/theme';
 import { useSession } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
 
+const GOAL_OPTIONS = [
+  'Dating',
+  'A breakup',
+  'A rough patch',
+  'Sex & intimacy',
+  'Getting in shape',
+  'Career',
+  'General self-work',
+  'Something else',
+] as const;
+
+const SITUATION_OPTIONS = [
+  'Single',
+  'In a relationship',
+  'Married',
+  'Divorced / separated',
+  'It\u2019s complicated',
+  'Prefer not to say',
+  'Something else',
+] as const;
+
+const OTHER = 'Something else';
+
 export default function Onboarding() {
   const { session, refreshProfile } = useSession();
   const [name, setName] = useState('');
-  const [goal, setGoal] = useState('');
-  const [situation, setSituation] = useState('');
+  const [goal, setGoal] = useState<string | null>(null);
+  const [goalOther, setGoalOther] = useState('');
+  const [situation, setSituation] = useState<string | null>(null);
+  const [situationOther, setSituationOther] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const goalValue = goal === OTHER ? goalOther.trim() : (goal ?? '');
+  const situationValue = situation === OTHER ? situationOther.trim() : (situation ?? '');
+
   const submit = async () => {
-    if (!session) return;
     setError(null);
+    if (!session) {
+      setError(
+        'Not signed in. If you just created an account, check your email to verify, then sign in.',
+      );
+      return;
+    }
+    if (!name.trim() || !goalValue || !situationValue) return;
     setLoading(true);
     const { error: err } = await supabase
       .from('users')
       .update({
         profile_json: {
           name: name.trim(),
-          goal: goal.trim(),
-          situation: situation.trim(),
+          goal: goalValue,
+          situation: situationValue,
         },
       })
       .eq('id', session.user.id);
@@ -48,7 +82,7 @@ export default function Onboarding() {
     router.replace('/(tabs)');
   };
 
-  const disabled = !name.trim() || !goal.trim() || !situation.trim() || loading;
+  const disabled = !name.trim() || !goalValue || !situationValue || loading;
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -71,24 +105,36 @@ export default function Onboarding() {
           />
 
           <Text style={styles.label}>What brings you here?</Text>
-          <TextInput
-            style={[styles.input, styles.multiline]}
-            placeholder="Dating, a breakup, getting fit, a rough patch…"
-            placeholderTextColor={AxisColors.muted}
-            multiline
-            value={goal}
-            onChangeText={setGoal}
+          <ChipGroup
+            options={GOAL_OPTIONS}
+            selected={goal}
+            onSelect={setGoal}
           />
+          {goal === OTHER && (
+            <TextInput
+              style={[styles.input, { marginTop: 10 }]}
+              placeholder="Tell us in a few words"
+              placeholderTextColor={AxisColors.muted}
+              value={goalOther}
+              onChangeText={setGoalOther}
+            />
+          )}
 
           <Text style={styles.label}>Where are you right now?</Text>
-          <TextInput
-            style={[styles.input, styles.multiline]}
-            placeholder="Single? In a relationship? Job, city, life stage…"
-            placeholderTextColor={AxisColors.muted}
-            multiline
-            value={situation}
-            onChangeText={setSituation}
+          <ChipGroup
+            options={SITUATION_OPTIONS}
+            selected={situation}
+            onSelect={setSituation}
           />
+          {situation === OTHER && (
+            <TextInput
+              style={[styles.input, { marginTop: 10 }]}
+              placeholder="Tell us in a few words"
+              placeholderTextColor={AxisColors.muted}
+              value={situationOther}
+              onChangeText={setSituationOther}
+            />
+          )}
 
           {error && <Text style={styles.error}>{error}</Text>}
 
@@ -102,6 +148,33 @@ export default function Onboarding() {
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
+  );
+}
+
+function ChipGroup({
+  options,
+  selected,
+  onSelect,
+}: {
+  options: readonly string[];
+  selected: string | null;
+  onSelect: (v: string) => void;
+}) {
+  return (
+    <View style={styles.chipRow}>
+      {options.map((opt) => {
+        const active = selected === opt;
+        return (
+          <Pressable
+            key={opt}
+            onPress={() => onSelect(opt)}
+            style={[styles.chip, active && styles.chipActive]}
+          >
+            <Text style={[styles.chipText, active && styles.chipTextActive]}>{opt}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
   );
 }
 
@@ -137,7 +210,33 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.sans,
     fontSize: 15,
   },
-  multiline: { minHeight: 80, textAlignVertical: 'top' },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 4,
+  },
+  chip: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: AxisColors.border,
+    backgroundColor: AxisColors.surface,
+  },
+  chipActive: {
+    borderColor: AxisColors.primary,
+    backgroundColor: AxisColors.primary,
+  },
+  chipText: {
+    color: AxisColors.textSecondary,
+    fontFamily: FontFamily.sans,
+    fontSize: 14,
+  },
+  chipTextActive: {
+    color: AxisColors.textPrimary,
+    fontFamily: FontFamily.sansBold,
+  },
   error: {
     color: AxisColors.crisis,
     fontFamily: FontFamily.sans,
