@@ -10,13 +10,30 @@ const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY')!;
 
 const MODEL = 'claude-sonnet-4-6';
 const SUMMARY_MODEL = 'claude-haiku-4-5-20251001';
+const CLASSIFIER_MODEL = 'claude-haiku-4-5-20251001';
 const MAX_TOKENS = 512;
 const SUMMARY_MAX_TOKENS = 300;
+const CLASSIFIER_MAX_TOKENS = 20;
 const HISTORY_LIMIT = 10;
 const SUMMARY_EVERY = 20; // 10 user + 10 assistant = 20 rows
 
 const SUMMARY_SYSTEM =
   "Summarize what matters about this user -- what they're dealing with, what's been said, any personal details. Keep it under 200 words. No preamble.";
+
+const CLASSIFIER_SYSTEM =
+  'You are a safety classifier for a mental wellness app. Classify the user\'s message:\n' +
+  '- "crisis": explicit self-harm, suicide ideation, plans to hurt self or others, or imminent danger\n' +
+  '- "distress": strong emotional pain, grief, panic, without self-harm indicators\n' +
+  '- "none": everything else\n\n' +
+  'Respond with ONLY a single JSON object: {"level": "crisis" | "distress" | "none"}. No preamble, no markdown.';
+
+const CRISIS_RESPONSE = `I hear you, and I'm really glad you reached out. What you're feeling is serious, and there are people trained for exactly this who can help right now:
+
+- Call or text 988 -- Suicide & Crisis Lifeline (free, 24/7)
+- Text HOME to 741741 -- Crisis Text Line
+- If you're in immediate danger, call 911
+
+You don't have to carry this alone. Please reach out to one of these now.`;
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -60,9 +77,10 @@ Deno.serve(async (req) => {
   const userMessage = body.userMessage?.trim();
   if (!botId || !userMessage) return json(400, { error: 'botId and userMessage required' });
 
-  const [botRes, profileRes] = await Promise.all([
+  const [botRes, profileRes, level] = await Promise.all([
     admin.from('bots').select('id, name, system_prompt, temperature').eq('id', botId).single(),
     admin.from('users').select('profile_json').eq('id', userId).single(),
+    classifyMessage(userMessage),
   ]);
   if (botRes.error || !botRes.data) return json(404, { error: 'bot not found' });
   if (profileRes.error || !profileRes.data) return json(404, { error: 'user profile missing' });
@@ -81,6 +99,40 @@ Deno.serve(async (req) => {
   if (convRes.error || !convRes.data) return json(500, { error: 'conversation upsert failed' });
   const conversationId = convRes.data.id;
   const memorySummary = convRes.data.memory_summary ?? '';
+
+  if (level === 'crisis') {
+    const crisisInsert = await admin
+      .from('messages')
+      .insert([
+        { conversation_id: conversationId, role: 'user', content: userMessage, tokens_used: 0 },
+        { conversation_id: conversationId, role: 'assistant', content: CRISIS_RESPONSE, tokens_used: 0 },
+      ])
+      .select('id, role, created_at');
+    if (crisisInsert.error) return json(500, { error: 'crisis message save failed' });
+
+    await admin.from('safety_events').insert({
+      user_id: userId,
+      conversation_id: conversationId,
+      event_type: 'crisis',
+      message_content: userMessage,
+    });
+
+    const assistantRow = crisisInsert.data.find((m) => m.role === 'assistant');
+    return json(200, {
+      reply: CRISIS_RESPONSE,
+      messageId: assistantRow?.id,
+      createdAt: assistantRow?.created_at,
+    });
+  }
+
+  if (level === 'distress') {
+    await admin.from('safety_events').insert({
+      user_id: userId,
+      conversation_id: conversationId,
+      event_type: 'distress',
+      message_content: userMessage,
+    });
+  }
 
   const historyRes = await admin
     .from('messages')
@@ -218,4 +270,37 @@ async function updateMemorySummary(
     .from('conversations')
     .update({ memory_summary: summary })
     .eq('id', conversationId);
+}
+
+async function classifyMessage(userMessage: string): Promise<'crisis' | 'distress' | 'none'> {
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: CLASSIFIER_MODEL,
+        max_tokens: CLASSIFIER_MAX_TOKENS,
+        system: CLASSIFIER_SYSTEM,
+        messages: [{ role: 'user', content: userMessage }],
+      }),
+    });
+    if (!res.ok) {
+      console.error('classifier http error', res.status, await res.text());
+      return 'none';
+    }
+    const body = await res.json();
+    const text: string = (body.content ?? [])
+      .filter((c: { type: string }) => c.type === 'text')
+      .map((c: { text: string }) => c.text)
+      .join('');
+    const match = text.match(/"level"\s*:\s*"(crisis|distress|none)"/);
+    return match ? (match[1] as 'crisis' | 'distress' | 'none') : 'none';
+  } catch (e) {
+    console.error('classifier error', e);
+    return 'none';
+  }
 }

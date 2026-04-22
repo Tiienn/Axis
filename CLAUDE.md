@@ -482,3 +482,97 @@ Goal: Mira, Zoe, Rex open to live chats (not just Hitch). Every 10 turns, the ed
 - Safety classifier / crisis response -> Week 5
 
 **Next -- Week 5:** safety classifier (Haiku gate on user messages) + canned crisis response + `safety_events` logging.
+
+---
+
+# Week 5 Plan -- Safety classifier + crisis response
+
+Goal: every user message passes through a Haiku 4.5 classifier before reaching Sonnet. Crisis-level messages (explicit self-harm, suicide, imminent danger) skip Sonnet entirely and return a canned response with US crisis resources. Distress (emotional pain without self-harm) routes to the normal bot but is logged. All events persisted to `safety_events`.
+
+## Key decisions (all user-approved)
+
+1. **Extend `safety_events` schema.** As shipped it's just `(user_id, event_type, created_at)` -- too narrow to audit. Migration `0002_safety_events.sql` adds `conversation_id uuid references conversations(id) on delete cascade` + `message_content text`, both nullable.
+
+2. **Fail-open on classifier error.** Haiku timeout / bad JSON -> proceed to normal Sonnet flow. Blocking users on a safety-system blip is worse UX than one missed classification that Sonnet's own guardrails would likely catch.
+
+3. **Plain bot bubble for crisis response, no special UI.** Alarmist red-alert styling can feel dismissive on borderline cases, and the text content is the actual safety work. Distinct UI styling deferred to Week 9 polish.
+
+4. **All 4 bots get the gate.** Uniform path: classifier runs regardless of which bot. Someone asking Rex "I want to end it" still deserves the crisis response.
+
+## Canned crisis response (US-only MVP)
+
+Stored as a constant in the edge function (never AI-generated):
+
+```
+I hear you, and I'm really glad you reached out. What you're feeling is serious,
+and there are people trained for exactly this who can help right now:
+
+- Call or text 988 -- Suicide & Crisis Lifeline (free, 24/7)
+- Text HOME to 741741 -- Crisis Text Line
+- If you're in immediate danger, call 911
+
+You don't have to carry this alone. Please reach out to one of these now.
+```
+
+## Tasks
+
+- [ ] `supabase/migrations/0002_safety_events.sql` -- add `conversation_id` + `message_content` columns (nullable, idempotent)
+- [ ] Apply migration via Supabase SQL editor
+- [ ] `supabase/functions/send-message/index.ts`:
+  - `classifyMessage(text): Promise<'crisis'|'distress'|'none'>` -- Haiku 4.5, `max_tokens=20`, JSON-only system prompt, fail-open on any error
+  - Call it right after parsing `userMessage`, before loading bot/profile/history
+  - `crisis` branch: upsert conversation (for conversation_id on safety_events), insert both user message + canned assistant reply, insert `safety_events` row with `event_type='crisis'`, return canned reply (skip Sonnet + skip summarizer trigger)
+  - `distress` branch: insert `safety_events` row with `event_type='distress'` + `message_content`, proceed to normal flow
+  - `none` branch: unchanged
+- [ ] Update [lib/database.types.ts](lib/database.types.ts) `safety_events` row type to include the two new columns
+- [ ] Redeploy: `supabase functions deploy send-message --no-verify-jwt`
+- [ ] Smoke test all three paths
+
+## Out of scope for Week 5
+
+- Classifying assistant replies -> Week 8 if needed
+- Country-specific hotlines -> MVP is US-first
+- Age-based variations -> everyone is 18+ per sign-up gate
+- Distinct crisis UI styling -> Week 9 polish
+- Admin dashboard for safety_events -> post-launch
+- Sentry events for crisis triggers -> Week 7 (Sentry install week)
+
+## Review
+
+**Status:** Safety classifier live end-to-end. All three routing paths (`none` / `distress` / `crisis`) verified with real messages in the Hitch chat; `safety_events` populated correctly with `conversation_id` + `message_content`.
+
+**Shipped:**
+- [supabase/migrations/0002_safety_events.sql](supabase/migrations/0002_safety_events.sql) -- adds nullable `conversation_id` (FK to `conversations` with cascade delete) + `message_content` to `safety_events`. Idempotent via `add column if not exists`. Applied in Supabase SQL editor ("Success. No rows returned.")
+- [lib/database.types.ts](lib/database.types.ts) -- added `SafetyEventRow` type + table entry so the client picks up the schema (client doesn't write to it today, but keeps types honest)
+- [supabase/functions/send-message/index.ts](supabase/functions/send-message/index.ts):
+  - Constants: `CLASSIFIER_MODEL` (Haiku 4.5), `CLASSIFIER_MAX_TOKENS=20`, `CLASSIFIER_SYSTEM` (three-level JSON-only prompt), `CRISIS_RESPONSE` (canned US resources, stored as a static string constant -- never AI-generated)
+  - `classifyMessage(userMessage)` helper appended after `updateMemorySummary`: calls Haiku, regex-parses `{"level": "crisis"|"distress"|"none"}`. **Fails open** on any HTTP error, parse failure, or exception -> returns `'none'` so a safety-system blip can't block users
+  - Classifier call lives in the `Promise.all` alongside bot + profile load, so the added latency is `max(classifier, bot+profile)`, not sum. In practice classifier is slightly slower, which moves total latency from ~100-300ms to ~300-500ms for the pre-Sonnet phase
+  - Crisis branch right after conversation upsert: insert user msg + `CRISIS_RESPONSE` into `messages`, log `safety_events` row (`event_type='crisis'`, `conversation_id`, `message_content`), return canned reply. Skips Sonnet entirely and skips the summarizer trigger
+  - Distress branch: log `safety_events` (`event_type='distress'`, same fields), fall through to normal Sonnet flow -- Mira/Zoe are designed for distress, so this is deliberate
+  - None branch: unchanged from Week 4
+
+**Deploy:**
+- `supabase functions deploy send-message --no-verify-jwt` -> deployed cleanly
+
+**Verified (live smoke test):**
+- Sent three messages to Hitch: `"hey whats up"`, `"I'm so overwhelmed I don't know what to do anymore"`, `"I'm thinking about hurting myself"`
+- UI: normal Hitch reply, normal Hitch reply, canned 988/741741 response (in Hitch's avatar bubble but with the canned text, not Hitch's voice)
+- `select event_type, message_content, created_at from safety_events order by created_at desc` returned exactly 2 rows: one `distress` for the overwhelmed message, one `crisis` for the hurt-myself message. No row for the normal message (correct -- classifier returned `none`)
+- `npx tsc --noEmit` -> exit 0
+
+**Known minor issue (deferred to Week 9 polish):**
+- Canned `CRISIS_RESPONSE` uses `--` (double dash) which React Native renders literally as two hyphens since we don't parse markdown. Not urgent -- the text is still readable and the resource info (988, 741741, 911) is unambiguous. Fix when we do the UI polish pass on bubbles. If we want to be safe sooner, could swap to em-dash or a bullet char in the constant
+
+**Not yet tested:**
+- Borderline messages (grief, panic attacks, "I just can't do this anymore" -- ambiguous between distress and crisis) -- classifier quality here matters more than I can eyeball in 3 test sends. Want to sample more before launch
+- iOS simulator / Android
+- Classifier fail-open behavior (would require mocking an Anthropic outage)
+
+**Deferred (per plan's out-of-scope):**
+- Classifying assistant replies -> Week 8
+- Country-specific hotlines
+- Distinct crisis-bubble UI styling -> Week 9
+- Sentry events for crisis triggers -> Week 7
+
+**Next -- Week 6:** RevenueCat + paywall + real rate limit on free tier (replaces the hardcoded `10 / 10 messages today` placeholder).

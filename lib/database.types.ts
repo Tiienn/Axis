@@ -39,6 +39,15 @@ export type MessageRow = {
   created_at: string;
 };
 
+export type SafetyEventRow = {
+  id: string;
+  user_id: string;
+  event_type: 'crisis' | 'distress';
+  conversation_id: string | null;
+  message_content: string | null;
+  created_at: string;
+};
+
 export type Database = {
   public: {
     Tables: {
@@ -64,6 +73,12 @@ export type Database = {
         Row: MessageRow;
         Insert: Partial<MessageRow> & { conversation_id: string; role: 'user' | 'assistant'; content: string };
         Update: Partial<MessageRow>;
+        Relationships: [];
+      };
+      safety_events: {
+        Row: SafetyEventRow;
+        Insert: Partial<SafetyEventRow> & { user_id: string; event_type: 'crisis' | 'distress' };
+        Update: Partial<SafetyEventRow>;
         Relationships: [];
       };
     };
