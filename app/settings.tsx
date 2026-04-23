@@ -8,8 +8,8 @@ import { AxisColors, FontFamily } from '@/constants/theme';
 import { useSession } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
 
-const PRIVACY_URL = 'https://axis.app/privacy';
-const TERMS_URL = 'https://axis.app/terms';
+const PRIVACY_URL = 'https://getaxis.chat/privacy';
+const TERMS_URL = 'https://getaxis.chat/terms';
 
 export default function Settings() {
   const { profile } = useSession();
@@ -30,7 +30,7 @@ export default function Settings() {
   const onDeleteAccount = () => {
     Alert.alert(
       'Delete account',
-      "We'll wipe your account and all your conversations. Email support@axis.app and we'll handle it within a day.",
+      "We'll wipe your account and all your conversations. Email support@getaxis.chat and we'll handle it within a day.",
     );
   };
 
