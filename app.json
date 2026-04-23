@@ -1,17 +1,19 @@
 {
   "expo": {
-    "name": "axis-scaffold",
-    "slug": "axis-scaffold",
+    "name": "Axis",
+    "slug": "axis",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "axisscaffold",
+    "scheme": "axis",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "chat.getaxis.app"
     },
     "android": {
+      "package": "chat.getaxis.app",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
