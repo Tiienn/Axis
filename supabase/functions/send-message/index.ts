@@ -63,10 +63,12 @@ async function fetchWithRetry(url: string, init: RequestInit): Promise<Response>
   return fetch(url, init);
 }
 
-// Fire-and-forget PostHog capture. No PII — distinct_id is auth UUID only.
+// Background PostHog capture. No PII — distinct_id is auth UUID only.
+// Uses EdgeRuntime.waitUntil so the request survives past the response return;
+// a bare fetch().catch() is dropped by Deno Deploy when the handler resolves.
 function capture(event: string, distinctId: string, properties: Record<string, unknown>) {
   if (!POSTHOG_API_KEY) return;
-  fetch(`${POSTHOG_HOST}/capture/`, {
+  const promise = fetch(`${POSTHOG_HOST}/capture/`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
@@ -76,6 +78,9 @@ function capture(event: string, distinctId: string, properties: Record<string, u
       properties,
     }),
   }).catch((e) => console.error('posthog capture failed', e));
+  // deno-lint-ignore no-explicit-any
+  const rt = (globalThis as any).EdgeRuntime;
+  if (rt?.waitUntil) rt.waitUntil(promise);
 }
 
 Deno.serve(async (req) => {
